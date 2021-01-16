@@ -1,3 +1,6 @@
+from threading import Thread
+from time import process_time
+
 if 'enums':
     OK = 0  # 游戏继续
     ENDGAME = 1  # 形成三连
@@ -13,9 +16,9 @@ class Board:
     基础棋盘类，用于计算局面情形+发放双方玩家所用局面
     使用数字1、2分别代表不同方玩家落子
     """
-
     def __init__(self):
         self.pool = {}  # 仅填充1/2的字典
+        self.history = []  # 落子历史
 
     def get_board(self, plr: int):
         """
@@ -41,7 +44,9 @@ class Board:
         返回落子结果
         """
         if _drop_data_check(pos):  # 非法落子检查
+            self.history.append('INVALID')
             return INVALID
+        self.history.append(pos)
         if pos in self.pool:  # 冲突落子检查
             return CONFILCT
         self.pool[pos] = plr  # 落子，检查游戏结束状态
@@ -67,17 +72,17 @@ class Board:
     def _check_endgame(self):
         """ 检查游戏状态是否结束 """
         for x in range(3):
-            if self._3_equal(
-                    self.pool.get((x, i)) for i in range(3)):  # axis 0
+            if self._3_equal(self.pool.get((x, i))
+                             for i in range(3)):  # axis 0
                 return ENDGAME
-            if self._3_equal(
-                    self.pool.get((i, x)) for i in range(3)):  # axis 1
+            if self._3_equal(self.pool.get((i, x))
+                             for i in range(3)):  # axis 1
                 return ENDGAME
         if self._3_equal(self.pool.get((i, i)) for i in range(3)):  # 正对角线
             return ENDGAME
         if self._3_equal(self.pool.get((i, 2 - i)) for i in range(3)):  # 反对角线
             return ENDGAME
-        return OK if len(self.pool) < 9 else DRAW
+        return OK  # 不执行平局判断
 
     def _3_equal(self, row):
         """ 辅助函数：检查一行3数（非空）相等状态 """
@@ -89,3 +94,114 @@ class Board:
             if n != n1:
                 return False
         return True
+
+
+class Game:
+    """
+    井字棋游戏对象
+    接收运行双方代码并收集结果
+    codes:
+        双方代码模块，其中包含play函数，可接收Board.get_board结果作为参数并返回落子位置
+    """
+    def __init__(self, codes, timeout=10):
+        self.codes = codes
+
+    @staticmethod
+    def _thread_wrap(code, board, output: dict):
+        """
+        线程内运行代码，输出结果
+
+        输入:
+            code: 待运行模块
+            board: 当前局面
+            output: 容纳返回值的字典
+                "result": 模块play函数运行结果
+                "error": 捕捉的运行异常
+                "dt": 运行用时 
+        """
+        res = {
+            "result": None,
+            "error": None,
+        }
+
+        try:
+            t1 = process_time()
+            output = code.play(board)
+            t2 = process_time()
+            res['result'] = output
+        except Exception as e:
+            t2 = process_time()
+            res['error'] = e
+
+        res['dt'] = t2 - t1
+        output.update(res)
+
+    def _get_result(self, winner, reason, extra=None):
+        """
+        构造比赛结果字典
+        "orders": 该局落子顺序
+        "winner": 胜者
+            0 - 先手胜
+            1 - 后手胜
+            None - 平局
+        "reason": 终局原因序号
+        "extra": 额外描述
+        "timeouts": 双方使用时间历史
+        """
+        return {
+            'orders': self.board.history,
+            'winner': winner,
+            'reason': reason,
+            'extra': extra,
+            'timeouts': self.timeout_history,
+        }
+
+    def match(self):
+        """
+        运行一场比赛
+        返回值: 比赛结果字典
+        """
+        self.board = Board()
+        timeouts = [timeout] * 2
+        self.timeout_history = []
+
+        for nround in range(9):
+            # 构造当局进程
+            plr_idx = nround % 2
+            thread_output = {}
+            frame = board.get_board(plr_idx + 1)
+            thr = Thread(target=self._thread_wrap,
+                         args=(self.codes[plr_idx], frame, thread_output))
+
+            # 限时运行
+            thr.start()
+            thr.join(timeouts[plr_idx])
+
+            # 判断线程死循环
+            if thr.is_alive():
+                return self._get_result(1 - plr_idx, TIMEOUT, '死循环')
+
+            # 计时统计，判断超时
+            timeouts[plr_idx] -= thread_output['dt']
+            if timeouts[plr_idx] < 0:
+                return self._get_result(1 - plr_idx, TIMEOUT)
+            self.timeout_history.append(timeouts.copy())
+
+            # 判断报错
+            if thread_output['error']:
+                return self._get_result(
+                    1 - plr_idx,
+                    ERROR,
+                    thread_output['error'],
+                )
+
+            # 落子判断
+            res = self.board.drop(plr_idx + 1, thread_output['result'])
+            if res == OK:  # 继续循环
+                continue
+            return self._get_result(
+                plr_idx if res == ENDGAME else 1 - plr_idx,
+                res,
+            )
+
+        return self._get_result(None, DRAW)  # 平局
