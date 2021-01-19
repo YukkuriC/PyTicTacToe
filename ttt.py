@@ -1,3 +1,8 @@
+__doc__ = '''
+井字棋基础设施
+包含棋盘类与单局游戏运行内核
+'''
+
 from threading import Thread
 from time import process_time
 
