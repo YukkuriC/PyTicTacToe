@@ -43,7 +43,7 @@ class Board:
         指定玩家编号plr在指定位置pos落子
         返回落子结果
         """
-        if _drop_data_check(pos):  # 非法落子检查
+        if self._drop_data_check(pos):  # 非法落子检查
             self.history.append('INVALID')
             return INVALID
         self.history.append(pos)
@@ -105,9 +105,10 @@ class Game:
     """
     def __init__(self, codes, timeout=10):
         self.codes = codes
+        self.timeout = timeout
 
     @staticmethod
-    def _thread_wrap(code, board, output: dict):
+    def _thread_wrap(code, board, thr_output: dict):
         """
         线程内运行代码，输出结果
 
@@ -134,7 +135,7 @@ class Game:
             res['error'] = e
 
         res['dt'] = t2 - t1
-        output.update(res)
+        thr_output.update(res)
 
     def _get_result(self, winner, reason, extra=None):
         """
@@ -162,14 +163,14 @@ class Game:
         返回值: 比赛结果字典
         """
         self.board = Board()
-        timeouts = [timeout] * 2
+        timeouts = [self.timeout] * 2
         self.timeout_history = []
 
         for nround in range(9):
             # 构造当局进程
             plr_idx = nround % 2
             thread_output = {}
-            frame = board.get_board(plr_idx + 1)
+            frame = self.board.get_board(plr_idx + 1)
             thr = Thread(target=self._thread_wrap,
                          args=(self.codes[plr_idx], frame, thread_output))
 
@@ -205,3 +206,10 @@ class Game:
             )
 
         return self._get_result(None, DRAW)  # 平局
+
+
+if __name__ == '__main__':
+    import codes.dumb_ordered as plr1, codes.dumb_random as plr2
+
+    game = Game([plr1, plr2])
+    print(game.match())
